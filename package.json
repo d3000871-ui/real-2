@@ -1,0 +1,28 @@
+{
+  "name": "diyorbek-online-rpg",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Uzbek-language multiplayer browser dark fantasy MMORPG with rich multi-zone maps, combat skills, collectible hero cards, quests, and companion pets.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "mmorpg",
+    "rpg",
+    "diablo",
+    "dark-fantasy",
+    "multiplayer",
+    "socket.io",
+    "html5-canvas",
+    "uzbek-game"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}

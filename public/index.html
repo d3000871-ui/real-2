@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DIYORBEK RPG — Dark Fantasy Diablo MMORPG</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- LOGIN / REGISTER -->
+  <div id="auth" class="auth-wrap">
+    <div class="auth card">
+      <div class="logo">⚔ DIYORBEK <span>DARK FANTASY RPG</span></div>
+      <p class="muted">Diablo uslubidagi multiplayer olamga xush kelibsiz! Qahramon yarating yoki o'yinga kiring.</p>
+      <input id="name" placeholder="Login (3-18 belgi: harf, raqam)" maxlength="18">
+      <input id="password" placeholder="Parol (kamida 4 belgi)" type="password">
+      <div class="actions">
+        <button id="login">Kirish</button>
+        <button id="register" class="secondary">Ro‘yxatdan o‘tish</button>
+      </div>
+      <p id="authMsg" class="msg"></p>
+    </div>
+  </div>
+
+  <!-- GAME SCREEN -->
+  <div id="game" class="hidden">
+    <header>
+      <div class="logo">⚔ DIYORBEK <span>MMORPG</span></div>
+      <div class="stats">
+        <div class="companion-badge" id="companionHud" title="Faol jangchi hamrohingiz">
+          <span id="compEmoji">🛡️</span>
+          <b id="compName">Hamrohsiz</b>
+          <span class="pill" id="compBonusTag">+0%</span>
+        </div>
+        <div class="stat-badge">🪙 <b id="coins">0</b></div>
+        <div class="stat-badge">⭐ Lv <b id="level">1</b></div>
+        <div class="stat-badge">🟢 <b id="online">1</b> online</div>
+        <button id="soundBtn" class="small secondary" title="Ovozni yoqish/o'chirish">🔊 Ovoz</button>
+        <button id="logout" class="small danger">Chiqish</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- LEFT COLUMN: WORLD CANVAS, BARS, HOTBAR, CHAT -->
+      <section class="world-panel card">
+        <div class="world-topbar">
+          <div class="zone-tag">
+            <h2 id="currentZoneName">🌍 Bosh Qal'a (Oromgoh)</h2>
+            <span id="zoneSafetyPill" class="pill safe">TINCH HUDUD</span>
+          </div>
+          <div class="zone-buttons">
+            <button id="openMapModalBtn" class="small">🗺 Xaritalar</button>
+            <button id="openQuestsModalBtn" class="small secondary">📜 Kvestlar</button>
+            <button id="openLeaderboardBtn" class="small secondary">🏆 Reyting</button>
+          </div>
+        </div>
+
+        <!-- BARS -->
+        <div class="bars-container">
+          <div class="bar-box">
+            <div class="bar-label">
+              <span>❤️ Salomatlik (HP)</span>
+              <span id="hpText">100 / 100</span>
+            </div>
+            <div class="bar-track">
+              <div id="hpFill" class="bar-fill hp" style="width: 100%;"></div>
+            </div>
+          </div>
+          <div class="bar-box">
+            <div class="bar-label">
+              <span>💙 Sehr Kuchi (MP)</span>
+              <span id="manaText">60 / 60</span>
+            </div>
+            <div class="bar-track">
+              <div id="manaFill" class="bar-fill mana" style="width: 100%;"></div>
+            </div>
+          </div>
+          <div class="bar-box">
+            <div class="bar-label">
+              <span>⭐ Tajriba (XP)</span>
+              <span id="xpText">0 / 100</span>
+            </div>
+            <div class="bar-track">
+              <div id="xpFill" class="bar-fill xp" style="width: 0%;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CANVAS -->
+        <div class="canvas-wrapper">
+          <canvas id="world" width="900" height="560"></canvas>
+        </div>
+
+        <!-- HOTBAR -->
+        <div class="hotbar">
+          <div class="skill-slot" data-skill="slash" id="skillSlash">
+            <div class="key">Q</div>
+            <div class="skill-info">
+              <b>⚔ Qilich zarbasi</b>
+              <small>0 MP · 100% hujum</small>
+            </div>
+          </div>
+          <div class="skill-slot" data-skill="fireball" id="skillFireball">
+            <div class="key">W</div>
+            <div class="skill-info">
+              <b>🔥 Olovli to'p</b>
+              <small>15 MP · 160% hujum</small>
+            </div>
+          </div>
+          <div class="skill-slot" data-skill="whirlwind" id="skillWhirlwind">
+            <div class="key">E</div>
+            <div class="skill-info">
+              <b>🌀 Qonli girdob</b>
+              <small>25 MP · 220% hujum</small>
+            </div>
+          </div>
+          <div class="skill-slot" id="skillHeal">
+            <div class="key">R</div>
+            <div class="skill-info">
+              <b>✨ Shifo bulog'i</b>
+              <small>Chashmaga yaqin boring</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- CHAT -->
+        <div class="chat">
+          <div id="chatLog"></div>
+          <form id="chatForm">
+            <input id="chatInput" maxlength="180" placeholder="Xabar yozing (Enter bosing)..." autocomplete="off">
+            <button type="submit">Yuborish</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- RIGHT COLUMN: TABS (SHOP, CARDS, QUESTS, RANKINGS) -->
+      <aside>
+        <nav class="tabs-nav">
+          <button class="tab-btn active" data-tab="tabShop">🏪 Do'kon & Qurolsoz</button>
+          <button class="tab-btn" data-tab="tabCards">🃏 Kartalar (<span id="tabCardCount">0</span>)</button>
+          <button class="tab-btn" data-tab="tabQuests">📜 Kvestlar</button>
+          <button class="tab-btn" data-tab="tabRank">🏆 Reyting</button>
+        </nav>
+
+        <!-- TAB 1: SHOP & UPGRADES -->
+        <div id="tabShop" class="tab-pane">
+          <section class="card">
+            <h2>🎁 Promokod</h2>
+            <p class="muted"><b>DIYORBEK</b> kodini kiriting — 100 ta qahramon kartasi va +1000 tanga oling!</p>
+            <div class="inline">
+              <input id="promo" placeholder="DIYORBEK" autocomplete="off">
+              <button id="promoBtn">Ishlatish</button>
+            </div>
+            <p id="promoMsg" class="msg"></p>
+          </section>
+
+          <section class="card" style="margin-top: 12px;">
+            <h2>🏪 Ustaxona va Do'kon</h2>
+            <div class="shop-item">
+              <div>
+                <b>Sirli Qadimiy Sandiq</b>
+                <small>3–5 ta yangi qahramon kartasi chiqadi</small>
+              </div>
+              <button id="chestBtn">100 🪙</button>
+            </div>
+
+            <div class="shop-item">
+              <div>
+                <b>⚔ Qurolni charxlash</b>
+                <small id="weaponLevelText">Daraja 0 · Hujum +0</small>
+              </div>
+              <button id="weaponBtn">Olish</button>
+            </div>
+
+            <div class="shop-item">
+              <div>
+                <b>🛡 Sovutni kuchaytirish</b>
+                <small id="armorLevelText">Daraja 0 · Himoya +0 · HP +0</small>
+              </div>
+              <button id="armorBtn">Olish</button>
+            </div>
+
+            <div class="shop-item">
+              <div>
+                <b>📿 Sehrli Tilsim (Amulet)</b>
+                <small id="amuletLevelText">Daraja 0 · Krit +0% · MP +0</small>
+              </div>
+              <button id="amuletBtn">Olish</button>
+            </div>
+
+            <p id="shopMsg" class="msg"></p>
+          </section>
+
+          <section class="card" style="margin-top: 12px;">
+            <h2>📊 Jang Statistikasi</h2>
+            <p class="muted">
+              Umumiy hujum: <b id="statAtk" style="color:#f3cb75;">0</b> · 
+              Umumiy himoya: <b id="statDef" style="color:#71b6f0;">0</b> · 
+              Krit ehtimoli: <b id="statCrit" style="color:#ea5f54;">0%</b><br>
+              Yo'q qilingan maxluqlar: <b id="statKills" style="color:#ecdcc1;">0</b> · 
+              Yengilgan Bosslar: <b id="statBossKills" style="color:#ffd769;">0</b>
+            </p>
+          </section>
+        </div>
+
+        <!-- TAB 2: CARDS -->
+        <div id="tabCards" class="tab-pane hidden">
+          <section class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <h2>🃏 Kolleksiya (<span id="cardCount">0</span>)</h2>
+              <small class="muted">Istalgan kartani "Faol Hamroh" qiling!</small>
+            </div>
+
+            <div class="card-filters">
+              <button class="filter-btn active" data-filter="all">Hammasi</button>
+              <button class="filter-btn" data-filter="legendary">Afsonaviy ⭐</button>
+              <button class="filter-btn" data-filter="epic">Epik 🔮</button>
+              <button class="filter-btn" data-filter="rare">Kamyob 🔷</button>
+              <button class="filter-btn" data-filter="common">Oddiy ⚪</button>
+            </div>
+
+            <div id="cards" class="cards"></div>
+            <p id="cardActionMsg" class="msg"></p>
+          </section>
+        </div>
+
+        <!-- TAB 3: QUESTS -->
+        <div id="tabQuests" class="tab-pane hidden">
+          <section class="card">
+            <h2>📜 Qahramon Kvestlari</h2>
+            <p class="muted">Vazifalarni bajaring va katta tangalar hamda XP mukofotlarini qo'lga kiriting!</p>
+            <div id="questsList"></div>
+            <p id="questActionMsg" class="msg"></p>
+          </section>
+        </div>
+
+        <!-- TAB 4: LEADERBOARD -->
+        <div id="tabRank" class="tab-pane hidden">
+          <section class="card">
+            <h2>🏆 Kuchlilar Reytingi</h2>
+            <p class="muted">Olamning eng qudratli jangchilari:</p>
+            <table class="leaderboard-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Jangchi</th>
+                  <th>Daraja</th>
+                  <th>O'ldirgan</th>
+                  <th>Tangalar</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboardBody">
+                <tr><td colspan="5" style="text-align:center;">Yuklanmoqda...</td></tr>
+              </tbody>
+            </table>
+          </section>
+        </div>
+      </aside>
+    </main>
+
+    <!-- ZONE MODAL -->
+    <div id="zoneModal" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>🗺 Olam Xaritalari</h2>
+          <button class="close-btn" id="closeZoneModal">✕</button>
+        </div>
+        <p class="muted">Boshqa hududlarga portal orqali o'ting yoki ushbu ro'yxatdan tanlang:</p>
+        <div class="zone-grid" id="zoneGrid"></div>
+      </div>
+    </div>
+
+    <!-- QUESTS MODAL -->
+    <div id="questsModal" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>📜 Vazifalar Ro'yxati</h2>
+          <button class="close-btn" id="closeQuestsModal">✕</button>
+        </div>
+        <div id="questsModalList"></div>
+      </div>
+    </div>
+
+    <!-- LEADERBOARD MODAL -->
+    <div id="leaderboardModal" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>🏆 Kuchlilar Jadvali</h2>
+          <button class="close-btn" id="closeLeaderboardModal">✕</button>
+        </div>
+        <table class="leaderboard-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Jangchi</th>
+              <th>Daraja</th>
+              <th>Maxluqlar</th>
+              <th>Bosslar</th>
+              <th>Tangalar</th>
+            </tr>
+          </thead>
+          <tbody id="modalLeaderboardBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <footer>
+      ⚔ DIYORBEK ONLINE MMORPG · Dark Fantasy Diablo Edition · Barcha o'yinchilar bitta umumiy multiplayer dunyoda
+    </footer>
+  </div>
+
+  <!-- SOCKET.IO SCRIPT WITH FALLBACK -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    if (typeof io === 'undefined') {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.socket.io/4.8.1/socket.io.min.js';
+      document.head.appendChild(s);
+    }
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>
