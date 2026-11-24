@@ -97,13 +97,23 @@ so'zini kiriting va **100 ta qahramon kartasi hamda +1000 bepul tanga**ga ega bo
 
 ## 🌐 Internetga Joylash (Deployment)
 
-Loyihani har qanday zamonaviy bulutli hostingga deploy qilish mumkin:
+Loyiha **Vercel**, **Render**, **Railway** va **VPS** serverlariga 100% moslashtirilgan:
+
+### ▲ Vercel orqali ishga tushirish (Tavsiya etiladi):
+Loyiha tarkibida `vercel.json` va `api/index.js` serverless funksiyasi sozlangan.
+1. [Vercel.com](https://vercel.com) saytiga kiring va GitHub akkauntingizni ulang.
+2. `real-2` repozitoriyasini tanlang va **Deploy** tugmasini bosing!
+3. Vercel loyihani avtomatik aniqlaydi va bir necha soniyada bepul domen (`https://real-2.vercel.app`) beradi.
+*Eslatma: Vercel serverless arxitekturasida barcha xaritalar, do'kon, kvestlar, janglar va reyting REST Serverless API orqali uzluksiz ishlaydi.*
+
+### 🟣 Render.com / Railway.app (Doimiy WebSocket rejim):
 - **Render.com**: Web Service yarating, Build Command: `npm install`, Start Command: `npm start`. Persistent disk ulab `data/` papkasini saqlash tavsiya etiladi.
 - **Railway.app**: Repozitoriyani to'g'ridan-to'g'ri ulang va WebSocket qo'llab-quvvatlash bilan ishga tushiring.
-- **VPS (Ubuntu/Debian)**: PM2 yoki Docker orqali ishga tushiring:
-  ```bash
-  pm2 start server.js --name "diyorbek-rpg"
-  ```
+
+### 🖥 VPS (Ubuntu/Debian):
+```bash
+pm2 start server.js --name "diyorbek-rpg"
+```
 
 ---
 

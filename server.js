@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const crypto = require('crypto');
 
 const app = express();
@@ -10,10 +11,18 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: true } });
 const PORT = process.env.PORT || 3000;
 
-const DATA = path.join(__dirname, 'data');
-if (!fs.existsSync(DATA)) {
-  fs.mkdirSync(DATA, { recursive: true });
+// Vercel serverless environment check
+const isVercel = Boolean(process.env.VERCEL);
+const DATA = isVercel ? path.join(os.tmpdir(), 'diyorbek_rpg') : path.join(__dirname, 'data');
+
+try {
+  if (!fs.existsSync(DATA)) {
+    fs.mkdirSync(DATA, { recursive: true });
+  }
+} catch (e) {
+  console.warn('Filesystem mkdir warning (using in-memory store):', e.message);
 }
+
 const DB_FILE = path.join(DATA, 'players.json');
 let players = {};
 try {
@@ -21,7 +30,7 @@ try {
     players = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
   }
 } catch (e) {
-  console.error('Error loading DB_FILE, starting fresh', e);
+  console.warn('DB read warning, using in-memory store:', e.message);
   players = {};
 }
 
@@ -33,13 +42,13 @@ const save = () => {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(players, null, 2));
   } catch (e) {
-    console.error('Failed to save players DB:', e);
+    // In serverless read-only mode, players still persists in-memory per instance
   }
 };
 
 const hash = (s, salt) => crypto.scryptSync(s, salt, 64).toString('hex');
 
-// 100 Hero Cards catalog definition (shared server-side)
+// 100 Hero Cards catalog definition
 const HERO_RARITIES = ['common', 'rare', 'epic', 'legendary'];
 const BASE_HEROES = [
   ['Sherlok Xolms', '🕵️', 'rare', 1.2],
@@ -203,7 +212,7 @@ const MAPS = {
   }
 };
 
-// Create in-memory dynamic state for each map
+// In-memory dynamic state for each map
 const mapStates = {};
 for (const [mapId, mapDef] of Object.entries(MAPS)) {
   mapStates[mapId] = {
@@ -212,7 +221,6 @@ for (const [mapId, mapDef] of Object.entries(MAPS)) {
   };
 }
 
-// Compute player max HP, max Mana, and stat power
 function computeStats(p) {
   const level = p.level || 1;
   const armor = p.gear?.armor || 0;
@@ -291,16 +299,43 @@ const safe = p => {
   };
 };
 
-app.use(express.json({ limit: '30kb' }));
+app.use(express.json({ limit: '50kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// CORS headers for all requests
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
 
 // API Routes
 app.get('/api/health', (_, res) => {
-  res.json({ ok: true, online: online.size, rooms: rooms.size, maps: Object.keys(MAPS).length });
+  res.json({
+    ok: true,
+    platform: isVercel ? 'Vercel Serverless' : 'Node.js Server',
+    online: online.size,
+    rooms: rooms.size,
+    maps: Object.keys(MAPS).length
+  });
 });
 
 app.get('/api/maps', (_, res) => {
   res.json({ maps: MAPS });
+});
+
+app.get('/api/world/:room', (req, res) => {
+  const room = req.params.room || 'bosh_qala';
+  const mapDef = MAPS[room] || MAPS.bosh_qala;
+  const state = mapStates[room] || { mobs: [], chests: [] };
+  res.json({
+    room,
+    mapDef,
+    mobs: state.mobs,
+    chests: state.chests
+  });
 });
 
 app.post('/api/register', (req, res) => {
@@ -505,6 +540,161 @@ app.get('/api/leaderboard', (_, res) => {
   res.json({ leaderboard: list });
 });
 
+// REST Fallback Action Endpoints (Works without WebSockets on Vercel)
+app.post('/api/action/move', auth, (req, res) => {
+  const p = req.player;
+  const { x, y } = req.body;
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    p.x = Math.max(30, Math.min(870, x));
+    p.y = Math.max(30, Math.min(530, y));
+    save();
+  }
+  res.json({ ok: true, player: safe(p) });
+});
+
+app.post('/api/action/attack', auth, (req, res) => {
+  const p = req.player;
+  const { mobId, skill = 'slash' } = req.body;
+  const room = p.room || 'bosh_qala';
+  const state = mapStates[room];
+  if (!state) return res.status(400).json({ error: "Xarita holati topilmadi." });
+
+  const mob = state.mobs.find(m => m.id === mobId);
+  if (!mob || mob.hp <= 0) return res.status(400).json({ error: "Maxluq mavjud emas." });
+
+  let manaCost = 0;
+  let skillMultiplier = 1.0;
+  if (skill === 'fireball') { manaCost = 15; skillMultiplier = 1.6; }
+  else if (skill === 'whirlwind') { manaCost = 25; skillMultiplier = 2.2; }
+
+  if (p.mana < manaCost) return res.status(400).json({ error: "Yetarli Mana yo'q!" });
+  p.mana -= manaCost;
+
+  const { attackPower, critRate, defensePower } = computeStats(p);
+  const isCrit = Math.random() * 100 < critRate;
+  let rawDamage = attackPower * skillMultiplier;
+  if (isCrit) rawDamage *= 1.8;
+  const damage = Math.max(8, Math.round(rawDamage - (mob.defense || 0)));
+
+  mob.hp -= damage;
+  let loot = null;
+  let levelUp = false;
+
+  if (mob.hp <= 0) {
+    mob.hp = 0;
+    const earnedXp = mob.xp || 20;
+    const earnedCoins = mob.coins || 15;
+    p.xp += earnedXp;
+    p.coins += earnedCoins;
+    p.stats.kills = (p.stats.kills || 0) + 1;
+
+    let cardDrop = null;
+    const dropThreshold = mob.isBoss ? 1.0 : 0.35;
+    if (Math.random() < dropThreshold) {
+      const dropCardIdx = Math.floor(Math.random() * 100);
+      p.cards.push({ id: crypto.randomUUID(), card: dropCardIdx, at: Date.now() });
+      cardDrop = ALL_HEROES[dropCardIdx];
+    }
+
+    if (mob.isBoss) {
+      p.stats.bossKills = (p.stats.bossKills || 0) + 1;
+      if (p.quests.defeat_boss) {
+        p.quests.defeat_boss.done = true;
+        p.quests.defeat_boss.current = 1;
+      }
+    }
+
+    if (p.quests.kill_mobs && !p.quests.kill_mobs.done) {
+      p.quests.kill_mobs.current++;
+      if (p.quests.kill_mobs.current >= p.quests.kill_mobs.target) p.quests.kill_mobs.done = true;
+    }
+
+    const xpNeeded = p.level * 100;
+    if (p.xp >= xpNeeded) {
+      p.xp -= xpNeeded;
+      p.level++;
+      p.coins += 200;
+      const { maxHp, maxMana } = computeStats(p);
+      p.hp = maxHp;
+      p.mana = maxMana;
+      levelUp = true;
+    }
+
+    loot = { coins: earnedCoins, xp: earnedXp, card: cardDrop, levelUp };
+    setTimeout(() => { mob.hp = mob.maxHp; }, mob.respawn || 8000);
+  } else if (mob.attack > 0) {
+    const mobDmg = Math.max(4, Math.round(mob.attack - defensePower * 0.4));
+    p.hp -= mobDmg;
+    if (p.hp <= 0) {
+      const { maxHp } = computeStats(p);
+      p.hp = Math.round(maxHp * 0.5);
+      p.room = 'bosh_qala';
+      p.x = 450;
+      p.y = 280;
+    }
+  }
+
+  save();
+  res.json({
+    damage,
+    isCrit,
+    skill,
+    mobHp: mob.hp,
+    mobMaxHp: mob.maxHp,
+    mobDead: mob.hp <= 0,
+    loot,
+    player: safe(p)
+  });
+});
+
+app.post('/api/action/portal', auth, (req, res) => {
+  const p = req.player;
+  const { targetMap, spawnX, spawnY } = req.body;
+  if (!MAPS[targetMap]) return res.status(400).json({ error: "Xarita topilmadi." });
+  if (p.level < MAPS[targetMap].levelReq) {
+    return res.status(403).json({ error: `Kamida Lv.${MAPS[targetMap].levelReq} kerak!` });
+  }
+
+  p.room = targetMap;
+  p.x = spawnX || 450;
+  p.y = spawnY || 280;
+
+  if (targetMap === 'qorongi_ormon' && p.quests.explore_forest && !p.quests.explore_forest.done) {
+    p.quests.explore_forest.done = true;
+    p.quests.explore_forest.current = 1;
+  }
+  save();
+  res.json({ player: safe(p), mapDef: MAPS[targetMap] });
+});
+
+app.post('/api/action/shrine', auth, (req, res) => {
+  const p = req.player;
+  const { maxHp, maxMana } = computeStats(p);
+  p.hp = maxHp;
+  p.mana = maxMana;
+  save();
+  res.json({ message: "Barcha Salomatlik va Mana to'liq tiklandi!", player: safe(p) });
+});
+
+app.post('/api/action/chest', auth, (req, res) => {
+  const p = req.player;
+  const bonusCoins = 100 + Math.floor(Math.random() * 100);
+  const bonusXp = 80;
+  p.coins += bonusCoins;
+  p.xp += bonusXp;
+  p.stats.chestsOpened = (p.stats.chestsOpened || 0) + 1;
+
+  const cardIdx = Math.floor(Math.random() * 100);
+  p.cards.push({ id: crypto.randomUUID(), card: cardIdx, at: Date.now() });
+
+  if (p.quests.open_chest && !p.quests.open_chest.done) {
+    p.quests.open_chest.done = true;
+    p.quests.open_chest.current = 1;
+  }
+  save();
+  res.json({ coins: bonusCoins, xp: bonusXp, card: ALL_HEROES[cardIdx], player: safe(p) });
+});
+
 // Socket.IO Multiplayer & Realtime Engine
 io.use((socket, next) => {
   const key = sessions.get(socket.handshake.auth?.token || '');
@@ -555,7 +745,6 @@ io.on('connection', socket => {
   socket.emit('chat', { system: true, text: `⚔ ${MAPS[currentRoom].name} xaritasiga xush kelibsiz, ${p.name}!` });
   broadcastRoom(currentRoom);
 
-  // Player movement
   socket.on('move', pos => {
     if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
     p.x = Math.max(30, Math.min(870, pos.x));
@@ -563,7 +752,6 @@ io.on('connection', socket => {
     broadcastRoom(currentRoom);
   });
 
-  // Map Change / Portal interaction
   socket.on('change_map', data => {
     const targetMap = String(data?.targetMap || '');
     if (!MAPS[targetMap]) return socket.emit('chat', { system: true, text: "Noma'lum xarita." });
@@ -572,12 +760,10 @@ io.on('connection', socket => {
       return socket.emit('chat', { system: true, text: `⛔ Bu xaritaga kirish uchun kamida Lv.${MAPS[targetMap].levelReq} kerak!` });
     }
 
-    // Leave old room
     socket.leave(currentRoom);
     rooms.get(currentRoom)?.delete(key);
     broadcastRoom(currentRoom);
 
-    // Join new room
     currentRoom = targetMap;
     p.room = targetMap;
     p.x = data.spawnX || 450;
@@ -587,11 +773,9 @@ io.on('connection', socket => {
     if (!rooms.has(currentRoom)) rooms.set(currentRoom, new Set());
     rooms.get(currentRoom).add(key);
 
-    // Quest check
     if (targetMap === 'qorongi_ormon' && p.quests.explore_forest && !p.quests.explore_forest.done) {
       p.quests.explore_forest.done = true;
       p.quests.explore_forest.current = 1;
-      socket.emit('quest_updated', { quest: 'explore_forest', message: "Kvest bajarildi: O'rmonga qadam qo'yildi!" });
     }
 
     save();
@@ -600,7 +784,6 @@ io.on('connection', socket => {
     broadcastRoom(currentRoom);
   });
 
-  // Combat: Attack Mob
   socket.on('attack_mob', data => {
     const mobId = String(data?.mobId || '');
     const skill = String(data?.skill || 'slash');
@@ -610,31 +793,22 @@ io.on('connection', socket => {
     const mob = state.mobs.find(m => m.id === mobId);
     if (!mob || mob.hp <= 0) return;
 
-    // Check distance between player and mob
     const dx = (p.x || 450) - mob.x;
     const dy = (p.y || 280) - mob.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist > 180) {
+    if (Math.sqrt(dx * dx + dy * dy) > 180) {
       return socket.emit('chat', { system: true, text: "Maxluq juda uzoqda! Yaqinroq boring." });
     }
 
-    // Skill mana check
     let manaCost = 0;
     let skillMultiplier = 1.0;
-    if (skill === 'fireball') {
-      manaCost = 15;
-      skillMultiplier = 1.6;
-    } else if (skill === 'whirlwind') {
-      manaCost = 25;
-      skillMultiplier = 2.2;
-    }
+    if (skill === 'fireball') { manaCost = 15; skillMultiplier = 1.6; }
+    else if (skill === 'whirlwind') { manaCost = 25; skillMultiplier = 2.2; }
 
     if (p.mana < manaCost) {
       return socket.emit('chat', { system: true, text: "Yetarli Mana yo'q!" });
     }
     p.mana -= manaCost;
 
-    // Calculate player damage
     const { attackPower, critRate } = computeStats(p);
     const isCrit = Math.random() * 100 < critRate;
     let rawDamage = attackPower * skillMultiplier;
@@ -655,24 +829,20 @@ io.on('connection', socket => {
 
     if (mob.hp <= 0) {
       mob.hp = 0;
-      // Mob Defeated!
       const earnedXp = mob.xp || 20;
       const earnedCoins = mob.coins || 15;
       p.xp += earnedXp;
       p.coins += earnedCoins;
       p.stats.kills = (p.stats.kills || 0) + 1;
 
-      // Card drop chance
       let cardDrop = null;
-      const dropRoll = Math.random();
       const dropThreshold = mob.isBoss ? 1.0 : 0.35;
-      if (dropRoll < dropThreshold) {
+      if (Math.random() < dropThreshold) {
         const dropCardIdx = Math.floor(Math.random() * 100);
         p.cards.push({ id: crypto.randomUUID(), card: dropCardIdx, at: Date.now() });
         cardDrop = ALL_HEROES[dropCardIdx];
       }
 
-      // Check Boss kill
       if (mob.isBoss) {
         p.stats.bossKills = (p.stats.bossKills || 0) + 1;
         if (p.quests.defeat_boss && !p.quests.defeat_boss.done) {
@@ -685,15 +855,11 @@ io.on('connection', socket => {
         });
       }
 
-      // Check kill quest
       if (p.quests.kill_mobs && !p.quests.kill_mobs.done) {
         p.quests.kill_mobs.current++;
-        if (p.quests.kill_mobs.current >= p.quests.kill_mobs.target) {
-          p.quests.kill_mobs.done = true;
-        }
+        if (p.quests.kill_mobs.current >= p.quests.kill_mobs.target) p.quests.kill_mobs.done = true;
       }
 
-      // Check Level Up
       let levelUp = false;
       const xpNeeded = p.level * 100;
       if (p.xp >= xpNeeded) {
@@ -718,46 +884,41 @@ io.on('connection', socket => {
         levelUp
       });
 
-      // Respawn timer
       setTimeout(() => {
         mob.hp = mob.maxHp;
         broadcastRoom(currentRoom);
       }, mob.respawn || 8000);
-    } else {
-      // Mob counter-attacks if not dummy and not dead
-      if (mob.attack > 0) {
-        const { defensePower } = computeStats(p);
-        const mobDmg = Math.max(4, Math.round(mob.attack - defensePower * 0.4));
-        p.hp -= mobDmg;
+    } else if (mob.attack > 0) {
+      const { defensePower } = computeStats(p);
+      const mobDmg = Math.max(4, Math.round(mob.attack - defensePower * 0.4));
+      p.hp -= mobDmg;
 
-        io.to(currentRoom).emit('combat_effect', {
-          type: 'mob_hit',
-          targetName: p.name,
-          damage: mobDmg,
-          x: p.x,
-          y: p.y
+      io.to(currentRoom).emit('combat_effect', {
+        type: 'mob_hit',
+        targetName: p.name,
+        damage: mobDmg,
+        x: p.x,
+        y: p.y
+      });
+
+      if (p.hp <= 0) {
+        const { maxHp } = computeStats(p);
+        p.hp = Math.round(maxHp * 0.5);
+        socket.leave(currentRoom);
+        rooms.get(currentRoom)?.delete(key);
+        broadcastRoom(currentRoom);
+
+        currentRoom = 'bosh_qala';
+        p.room = 'bosh_qala';
+        p.x = 450;
+        p.y = 280;
+        socket.join(currentRoom);
+        if (!rooms.has(currentRoom)) rooms.set(currentRoom, new Set());
+        rooms.get(currentRoom).add(key);
+
+        socket.emit('player_died', {
+          text: `☠ Siz ${mob.name} tomonidan mag'lub bo'ldingiz va Bosh Qal'ada jonlandingiz.`
         });
-
-        if (p.hp <= 0) {
-          // Player death & respawn at Bosh Qal'a
-          const { maxHp } = computeStats(p);
-          p.hp = Math.round(maxHp * 0.5);
-          socket.leave(currentRoom);
-          rooms.get(currentRoom)?.delete(key);
-          broadcastRoom(currentRoom);
-
-          currentRoom = 'bosh_qala';
-          p.room = 'bosh_qala';
-          p.x = 450;
-          p.y = 280;
-          socket.join(currentRoom);
-          if (!rooms.has(currentRoom)) rooms.set(currentRoom, new Set());
-          rooms.get(currentRoom).add(key);
-
-          socket.emit('player_died', {
-            text: `☠ Siz ${mob.name} tomonidan mag'lub bo'ldingiz va Bosh Qal'ada jonlandingiz.`
-          });
-        }
       }
     }
 
@@ -766,7 +927,6 @@ io.on('connection', socket => {
     broadcastRoom(currentRoom);
   });
 
-  // Use Healing / Buff Shrine
   socket.on('use_shrine', data => {
     const shrineId = String(data?.shrineId || '');
     const mapDef = MAPS[currentRoom];
@@ -791,7 +951,6 @@ io.on('connection', socket => {
     broadcastRoom(currentRoom);
   });
 
-  // Open World Chest
   socket.on('open_world_chest', data => {
     const chestId = String(data?.chestId || '');
     const state = mapStates[currentRoom];
@@ -813,7 +972,6 @@ io.on('connection', socket => {
     p.xp += bonusXp;
     p.stats.chestsOpened = (p.stats.chestsOpened || 0) + 1;
 
-    // Guaranteed card from world chest
     const cardIdx = Math.floor(Math.random() * 100);
     p.cards.push({ id: crypto.randomUUID(), card: cardIdx, at: Date.now() });
 
@@ -823,22 +981,16 @@ io.on('connection', socket => {
     }
 
     save();
-    socket.emit('chest_opened', {
-      coins: bonusCoins,
-      xp: bonusXp,
-      card: ALL_HEROES[cardIdx]
-    });
+    socket.emit('chest_opened', { coins: bonusCoins, xp: bonusXp, card: ALL_HEROES[cardIdx] });
     socket.emit('player_sync', { player: safe(p) });
     broadcastRoom(currentRoom);
 
-    // Respawn chest after 45s
     setTimeout(() => {
       chest.opened = false;
       broadcastRoom(currentRoom);
     }, 45000);
   });
 
-  // Chat message
   socket.on('chat', msg => {
     const text = String(msg || '').trim().slice(0, 180);
     if (!text) return;
@@ -849,7 +1001,6 @@ io.on('connection', socket => {
     });
   });
 
-  // Disconnect
   socket.on('disconnect', () => {
     online.delete(key);
     rooms.get(currentRoom)?.delete(key);
@@ -857,6 +1008,10 @@ io.on('connection', socket => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Diyorbek MMORPG Server listening on http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`Diyorbek MMORPG Server listening on http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;

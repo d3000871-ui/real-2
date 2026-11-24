@@ -405,11 +405,38 @@ async function loadZoneGrid() {
   }).join('');
 }
 
-window.teleportToMap = function(mapId) {
+window.teleportToMap = async function(mapId) {
   $('zoneModal').classList.add('hidden');
-  socket?.emit('change_map', { targetMap: mapId });
   Sound.portal();
+  if (socket && socket.connected) {
+    socket.emit('change_map', { targetMap: mapId });
+  } else {
+    try {
+      const d = await api('/api/action/portal', { targetMap: mapId });
+      update(d.player);
+      await loadWorld(mapId);
+      addChat({ system: true, text: `🌌 Siz ${d.mapDef.name} xaritasiga kirdingiz!` });
+    } catch (e) {
+      addChat({ system: true, text: e.message });
+    }
+  }
 };
+
+async function loadWorld(room) {
+  try {
+    const d = await api('/api/world/' + (room || 'bosh_qala'));
+    worldState.room = d.room;
+    worldState.mapDef = d.mapDef;
+    worldState.mobs = d.mobs;
+    worldState.chests = d.chests;
+    if (d.mapDef) {
+      $('currentZoneName').textContent = `🌍 ${d.mapDef.name}`;
+      const isSafe = d.mapDef.isSafeZone;
+      $('zoneSafetyPill').className = isSafe ? 'pill safe' : 'pill danger';
+      $('zoneSafetyPill').textContent = isSafe ? 'TINCH HUDUD' : 'XAVFLI HUDUD';
+    }
+  } catch (e) {}
+}
 
 // AUTH
 async function enter(mode) {
@@ -421,6 +448,7 @@ async function enter(mode) {
     token = d.token;
     localStorage.setItem('diyorbekToken', token);
     update(d.player);
+    await loadWorld(d.player?.room || 'bosh_qala');
     showGame();
     connect();
   } catch (e) {
@@ -1137,7 +1165,7 @@ function drawMobs() {
 
 // 7. PLAYERS & ACTIVE COMPANIONS
 function drawPlayers() {
-  const players = worldState.players || [];
+  const players = (worldState.players && worldState.players.length) ? worldState.players : (me ? [me] : []);
   players.forEach(p => {
     const isOwn = (p.name === me?.name);
     const x = isOwn ? (me.x || 450) : (p.x || 450);
@@ -1354,7 +1382,7 @@ function drawMinimap() {
   });
 
   // Players on radar
-  (worldState.players || []).forEach(p => {
+  ((worldState.players && worldState.players.length) ? worldState.players : (me ? [me] : [])).forEach(p => {
     const isOwn = (p.name === me?.name);
     ctx.fillStyle = isOwn ? '#52c41a' : '#1890ff';
     ctx.beginPath();
@@ -1369,6 +1397,12 @@ canvas.onclick = e => {
   const clickX = (e.clientX - r.left) * (W / r.width);
   const clickY = (e.clientY - r.top) * (H / r.height);
 
+  // CANVAS CLICK INTERACTION
+canvas.onclick = async e => {
+  const r = canvas.getBoundingClientRect();
+  const clickX = (e.clientX - r.left) * (W / r.width);
+  const clickY = (e.clientY - r.top) * (H / r.height);
+
   // 1. Check Click on Mob (Attack)
   const clickedMob = (worldState.mobs || []).find(m => {
     if (m.hp <= 0) return false;
@@ -1379,7 +1413,39 @@ canvas.onclick = e => {
   });
 
   if (clickedMob) {
-    socket?.emit('attack_mob', { mobId: clickedMob.id, skill: selectedSkill });
+    if (socket && socket.connected) {
+      socket.emit('attack_mob', { mobId: clickedMob.id, skill: selectedSkill });
+    } else {
+      // Vercel Serverless REST Fallback
+      try {
+        const res = await api('/api/action/attack', { mobId: clickedMob.id, skill: selectedSkill });
+        const txt = res.isCrit ? `⚡ KRIT! -${res.damage}` : `-${res.damage}`;
+        const col = res.isCrit ? '#ffd24c' : '#ffffff';
+        addFloater(clickedMob.x, clickedMob.y, txt, col, res.isCrit);
+        addSpellFx(selectedSkill, clickedMob.x, clickedMob.y);
+        if (res.isCrit) Sound.crit();
+        else if (selectedSkill === 'fireball') Sound.fireball();
+        else if (selectedSkill === 'whirlwind') Sound.whirlwind();
+        else Sound.hit();
+
+        clickedMob.hp = res.mobHp;
+        if (res.loot) {
+          addFloater(me?.x || 450, me?.y || 280, `+${res.loot.coins} 🪙`, '#ffd769');
+          addFloater(me?.x || 450, (me?.y || 280) - 25, `+${res.loot.xp} XP`, '#36cfc9');
+          Sound.coin();
+          if (res.loot.card) {
+            addChat({ system: true, text: `🎁 Sizga yangi karta tushdi: ${res.loot.card[1]} ${res.loot.card[0]}!` });
+          }
+          if (res.loot.levelUp) {
+            Sound.levelUp();
+            addFloater(me?.x || 450, (me?.y || 280) - 45, `⭐ DARAJA OSHDI!`, '#ffec3d', true);
+          }
+        }
+        update(res.player);
+      } catch (err) {
+        addChat({ system: true, text: err.message });
+      }
+    }
     return;
   }
 
@@ -1391,12 +1457,28 @@ canvas.onclick = e => {
   });
 
   if (clickedPortal) {
-    socket?.emit('change_map', {
-      targetMap: clickedPortal.target,
-      spawnX: clickedPortal.spawnX,
-      spawnY: clickedPortal.spawnY
-    });
     Sound.portal();
+    if (socket && socket.connected) {
+      socket.emit('change_map', {
+        targetMap: clickedPortal.target,
+        spawnX: clickedPortal.spawnX,
+        spawnY: clickedPortal.spawnY
+      });
+    } else {
+      // Vercel Serverless REST Fallback
+      try {
+        const d = await api('/api/action/portal', {
+          targetMap: clickedPortal.target,
+          spawnX: clickedPortal.spawnX,
+          spawnY: clickedPortal.spawnY
+        });
+        update(d.player);
+        await loadWorld(clickedPortal.target);
+        addChat({ system: true, text: `🌌 Siz ${d.mapDef.name} xaritasiga kirdingiz!` });
+      } catch (err) {
+        addChat({ system: true, text: err.message });
+      }
+    }
     return;
   }
 
@@ -1409,7 +1491,25 @@ canvas.onclick = e => {
   });
 
   if (clickedChest) {
-    socket?.emit('open_world_chest', { chestId: clickedChest.id });
+    if (socket && socket.connected) {
+      socket.emit('open_world_chest', { chestId: clickedChest.id });
+    } else {
+      // Vercel Serverless REST Fallback
+      try {
+        const res = await api('/api/action/chest', { chestId: clickedChest.id });
+        clickedChest.opened = true;
+        addFloater(me?.x || 450, me?.y || 280, `+${res.coins} 🪙`, '#ffd769');
+        addFloater(me?.x || 450, (me?.y || 280) - 25, `+${res.xp} XP`, '#36cfc9');
+        Sound.coin();
+        if (res.card) {
+          addChat({ system: true, text: `🎉 Sandiqdan karta chiqdi: ${res.card[1]} ${res.card[0]}!` });
+        }
+        update(res.player);
+        setTimeout(() => { clickedChest.opened = false; }, 45000);
+      } catch (err) {
+        addChat({ system: true, text: err.message });
+      }
+    }
     return;
   }
 
@@ -1421,7 +1521,20 @@ canvas.onclick = e => {
   });
 
   if (clickedShrine) {
-    socket?.emit('use_shrine', { shrineId: clickedShrine.id });
+    if (socket && socket.connected) {
+      socket.emit('use_shrine', { shrineId: clickedShrine.id });
+    } else {
+      // Vercel Serverless REST Fallback
+      try {
+        const res = await api('/api/action/shrine', { shrineId: clickedShrine.id });
+        addFloater(me?.x || 450, me?.y || 280, `✨ TO'LIQ SHIFO!`, '#52c41a', true);
+        addChat({ system: true, text: res.message });
+        Sound.heal();
+        update(res.player);
+      } catch (err) {
+        addChat({ system: true, text: err.message });
+      }
+    }
     return;
   }
 
@@ -1430,7 +1543,11 @@ canvas.onclick = e => {
     me.x = clickX;
     me.y = clickY;
   }
-  socket?.emit('move', { x: clickX, y: clickY });
+  if (socket && socket.connected) {
+    socket.emit('move', { x: clickX, y: clickY });
+  } else {
+    api('/api/action/move', { x: clickX, y: clickY }).catch(() => {});
+  }
 };
 
 // AUTO-RESUME SESSION ON REFRESH
@@ -1439,6 +1556,7 @@ async function resume() {
   try {
     const d = await api('/api/me');
     update(d.player);
+    await loadWorld(d.player?.room || 'bosh_qala');
     showGame();
     connect();
   } catch (e) {

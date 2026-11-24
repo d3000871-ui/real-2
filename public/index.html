@@ -310,15 +310,9 @@
     </footer>
   </div>
 
-  <!-- SOCKET.IO SCRIPT WITH FALLBACK -->
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
-    if (typeof io === 'undefined') {
-      const s = document.createElement('script');
-      s.src = 'https://cdn.socket.io/4.8.1/socket.io.min.js';
-      document.head.appendChild(s);
-    }
-  </script>
+  <!-- SOCKET.IO SCRIPT WITH VERCEL CDN SUPPORT -->
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <script src="/socket.io/socket.io.js" onerror="this.remove()"></script>
   <script src="app.js"></script>
 </body>
 </html>
